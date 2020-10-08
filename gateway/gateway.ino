@@ -1,6 +1,7 @@
 /*Investigating LoRa For use in a Cattle Tracking and Monitoring System
   This is the first prototype for the gateway code
   Intended functionality is to receive time stamps from different nodes and to store them to an SD card for post processing
+  Hardware Required: Arduino Uno, LoRa hat for arduino, MCP7940M RTC, Pushbutton, Arduio SD Card Module
   Author: Mark Njoroge
   Date: October 2020
 */
@@ -49,8 +50,10 @@ void setup() {  //set up code, runs once
   Serial.begin(9600);
   Serial.println(F("Cattle Tracker - This is the Gateway, Welcome"));
 
-  // Setting up LoRa Radio
+  // Setting up the modules
   setup_radio();
+  setup_rtc();
+  setup_sdcard();
   
   //attaching interrupts
   attachInterrupt(digitalPinToInterrupt(BEACON_BUTTON), button_pressed, RISING);
@@ -99,6 +102,26 @@ void setup_radio(){
 }
 
 void setup_rtc() {
+  while (!MCP7940.begin()) {
+    Serial.println(F("Unable to find MCP7940M."));
+    while(1);
+  }
+  while (!MCP7940.deviceStatus()) {// Turn oscillator on if necessary  //
+    Serial.println(F("Oscillator is off, turning it on."));
+    bool deviceStatus = MCP7940.deviceStart();  // Start oscillator and return state//
+    if (!deviceStatus) {
+      Serial.println(F("Oscillator did not start, trying again."));
+      delay(1000);
+    } // of if-then oscillator didn't start
+  } // of while the oscillator is off
+  MCP7940.adjust();                           
   
-  
+}
+
+
+void setup_sdcard() {
+  if (!SD.begin(10)) {
+    Serial.println(F("SD Card Initialization failed!"));
+     while (1);
+  }  
 }
