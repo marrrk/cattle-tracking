@@ -8,6 +8,7 @@
 
 /*************** Include Libraries *******************/
 #include <SPI.h>
+#include <stdio.h>
 #include <RH_RF95.h>
 #include <MCP7940.h>
 #include <SD.h>
@@ -17,7 +18,7 @@
 #define RFM95_RST 9
 #define RFM95_INT 2
 #define RF95_FREQ 915.0   // Radio Frequency, match to Rx
-#define BEACON_BUTTON 3   // Buton to start Synchronisation
+#define SYNCH_BUTTON 3   // Buton to start Synchronisation
 
 /************ Function definitions *******************/
 void button_pressed();
@@ -28,57 +29,80 @@ void setup_sdcard();
 //Instantiate classes
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 MCP7940_Class MCP7940;
-File myFile;
+//File myFile;
 
 /*************** Global Variables *******************/
-unsigned long micro_seconds;
+unsigned long current_microseconds;
+unsigned long prev_microseconds;
+unsigned long max_microseconds;
 unsigned long last_interruptTime = 0;
 int debounce_delay = 500;
 int LED_state = 0;
-bool first_start = true;
-//bool synchronising = true;
+bool synchronising;
 
-/**************** Setting up *********************/
+/**************** First Start up *********************/
 void setup() {  //set up code, runs once
   //setting up inputs and outputs
-  pinMode(BEACON_BUTTON, INPUT);
+  pinMode(SYNCH_BUTTON, INPUT);
   pinMode(LED_BUILTIN, OUTPUT);
 
-  pinMode(RFM95_RST, OUTPUT);
-  digitalWrite(RFM95_RST,HIGH);
-
   Serial.begin(9600);
+  //while(!Serial) {
+   // delay(1);
+ // }
   Serial.println(F("Cattle Tracker - This is the Gateway, Welcome"));
 
   // Setting up the modules
   setup_radio();
   setup_rtc();
-  setup_sdcard();
+  //setup_sdcard();
+
+  Serial.println(F("First start: Sending beacon to Nodes"));
+  uint8_t data[] = "1";
+  rf95.send(data,sizeof(data));
+  rf95.waitPacketSent();
+
+
+  
+  
   
   //attaching interrupts
-  attachInterrupt(digitalPinToInterrupt(BEACON_BUTTON), button_pressed, RISING);
+  attachInterrupt(digitalPinToInterrupt(SYNCH_BUTTON), button_pressed, RISING);
+
 }
 
 /**************** Main Code **********************/
 void loop() {
-  if (first_start) {
-    //send alert messages to nodes
-  }
-}
+  current_microseconds = micros();
+  uint8_t data[RH_RF95_MAX_MESSAGE_LEN];
+  if (synchronising) {
+    sprintf(data,"%lu",current_microseconds);
+    rf95.send(data,sizeof(data));
+    rf95.waitPacketSent();
 
+    synchronising = false;
+  }
+
+}
+/********************* Function *********************/
 void button_pressed(){
-  long interruptTime = millis();
+  long interruptTime = millis(); //this doesnt work, need a new way to debounce
 
   if ((last_interruptTime - interruptTime) > debounce_delay) {
    //write interrupt logic here
    //plan is to start the synchronisation content
-   //synchronising = true;
+   Serial.print(F("Button Pressed at:   "));
+   Serial.println(current_microseconds);
+   synchronising = true;
   }
   last_interruptTime = interruptTime;
 }
 
 
 void setup_radio(){
+  pinMode(RFM95_RST, OUTPUT);
+  digitalWrite(RFM95_RST,HIGH);
+  
   // manual reset
   digitalWrite(RFM95_RST, LOW);
   delay(10);

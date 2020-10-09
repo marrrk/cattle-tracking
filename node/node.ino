@@ -21,7 +21,8 @@
 /***************** Function Definitions **************************/
 void setup_radio();
 void setup_rtc();
-
+void determineMessageType();
+bool synchronized();
 
 /******************* Instantiate classes **************************/
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
@@ -29,21 +30,58 @@ MCP7940_Class MCP7940;
 
 
 /******************** Global Variables ******************************/
-unsigned long micro_seconds;
-
+unsigned long prev_micros;
+unsigned long current_micros;
+unsigned long time_stamp;
+uint8_t count = 0;
 
 
 void setup() {
+  Serial.begin(9600);
+  //while(!Serial) {
+    //delay(1);
+  //}
+  
   pinMode(LED_BUILTIN, OUTPUT);
+  digitalWrite(LED_BUILTIN, HIGH);
   setup_radio();
   setup_rtc();
 
+  prev_micros = micros();  
+  //attachInterrupt(digitalPinToInterrupt(RFM95_INT), determineMessageType, CHANGE);
 }
 
 void loop() {
-  // put your main code here, to run repeatedly:
+  //sleep for a while, ideally
+  current_micros = micros();
+  time_stamp = current_micros - prev_micros;
+  if (time_stamp>1E6) {
+    prev_micros = current_micros; 
+  }
+  if (rf95.available()) {   //message available OR synchronizing
+    uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+    uint8_t len = sizeof(buf);
 
-
+    if (rf95.recv(buf, &len)) {
+      
+      //RH_RF95::printBuffer("Received: ", buf, len);
+      Serial.print(F("Got: "));
+      String message = (char*)buf;
+      Serial.println(message);
+      rf95.sleep();
+    } 
+    else { 
+        Serial.println(F("Receive Failed"));  
+      }
+      
+    digitalWrite(LED_BUILTIN, LOW);
+    delay(500);
+    digitalWrite(LED_BUILTIN,HIGH);
+  } else {
+    //delay(5000); //wait five seconds
+    Serial.print("Device time:   ");
+    Serial.println(time_stamp);
+  }
 }
 
 
@@ -88,5 +126,15 @@ void setup_rtc(){
     } // of if-then oscillator didn't start
   } // of while the oscillator is off
   MCP7940.adjust();                           
+
+  Serial.println(F("RTC Setup OK!"));
+}
+
+
+void determineMessageType() {
+  unsigned long current_time = micros();
   
+  digitalWrite(LED_BUILTIN, HIGH);
+  delay(500);
+  digitalWrite(LED_BUILTIN, LOW);
 }
