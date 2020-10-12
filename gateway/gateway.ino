@@ -14,11 +14,12 @@
 #include <SD.h>
 
 /*************** Defining Constants ******************/
-#define RFM95_CS 10
+#define RFM95_CS 10       //chip select for SPI line on radio
 #define RFM95_RST 9
 #define RFM95_INT 2
 #define RF95_FREQ 915.0   // Radio Frequency, match to Rx
 #define SYNCH_BUTTON 3   // Buton to start Synchronisation
+#define SDCARD_CS 4       // chip select for SPI line on SDCARD
 
 /************ Function definitions *******************/
 void button_pressed();
@@ -29,13 +30,14 @@ void setup_sdcard();
 //Instantiate classes
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
 MCP7940_Class MCP7940;
-//File myFile;
+File myFile;
 
 /*************** Global Variables *******************/
 unsigned long current_microseconds;
 unsigned long prev_microseconds;
 unsigned long max_microseconds;
 unsigned long last_interruptTime = 0;
+unsigned long time_stamp;
 int debounce_delay = 500;
 int LED_state = 0;
 bool synchronising;
@@ -55,28 +57,33 @@ void setup() {  //set up code, runs once
   // Setting up the modules
   setup_radio();
   setup_rtc();
-  //setup_sdcard();
+  setup_sdcard();
 
   Serial.println(F("First start: Sending beacon to Nodes"));
-  uint8_t data[] = "1";
-  rf95.send(data,sizeof(data));
+  uint8_t beacon[] = "1";
+  rf95.send(beacon,sizeof(beacon));
   rf95.waitPacketSent();
-
-
-  
-  
   
   //attaching interrupts
   attachInterrupt(digitalPinToInterrupt(SYNCH_BUTTON), button_pressed, RISING);
+
+  prev_microseconds = micros();
 
 }
 
 /**************** Main Code **********************/
 void loop() {
   current_microseconds = micros();
+  time_stamp = current_microseconds - prev_microseconds;
+  if (time_stamp > 1E6) prev_microseconds = current_microseconds;
   uint8_t data[RH_RF95_MAX_MESSAGE_LEN];
-  if (synchronising) {
-    sprintf(data,"%lu",current_microseconds);
+
+  if (synchronising) {    //gonna have to do synchronizing things here.
+    uint8_t temp_data[250];
+    strcpy(data,"2"); 
+    sprintf(temp_data,"%lu",time_stamp);
+    
+    strncat(data, temp_data,sizeof(temp_data));
     rf95.send(data,sizeof(data));
     rf95.waitPacketSent();
 
@@ -144,7 +151,7 @@ void setup_rtc() {
 
 
 void setup_sdcard() {
-  if (!SD.begin(10)) {
+  if (!SD.begin(SDCARD_CS)) {
     Serial.println(F("SD Card Initialization failed!"));
      while (1);
   }  
