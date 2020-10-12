@@ -21,7 +21,7 @@
 /***************** Function Definitions **************************/
 void setup_radio();
 void setup_rtc();
-void determineMessageType();
+void determineMessageType(char indicator);
 bool synchronized();
 
 /******************* Instantiate classes **************************/
@@ -34,6 +34,7 @@ unsigned long prev_micros;
 unsigned long current_micros;
 unsigned long time_stamp;
 uint8_t count = 0;
+bool synchronise;
 
 
 void setup() {
@@ -63,11 +64,21 @@ void loop() {
     uint8_t len = sizeof(buf);
 
     if (rf95.recv(buf, &len)) {
-      
-      //RH_RF95::printBuffer("Received: ", buf, len);
-      Serial.print(F("Got: "));
       String message = (char*)buf;
+      determineMessageType(message[0]);
+      //Serial.println(message[0]);
+      //RH_RF95::printBuffer("Received: ", buf, len);
+
+      Serial.print(F("Got: "));
       Serial.println(message);
+
+      //received message, now reply accordingly. if synchronizing or not 
+      if (synchronise) {
+        //synchronizing logic, send the time back and wait
+        Serial.println(F("Syncrhonizing"));
+      }
+      else { Serial.println(F("Synchronizing complete")); }
+      
       rf95.sleep();
     } 
     else { 
@@ -77,10 +88,10 @@ void loop() {
     digitalWrite(LED_BUILTIN, LOW);
     delay(500);
     digitalWrite(LED_BUILTIN,HIGH);
-  } else {
+  } else {              //no message received, send the signal containing information from node
     //delay(5000); //wait five seconds
-    Serial.print("Device time:   ");
-    Serial.println(time_stamp);
+    //Serial.print("Device time:   ");
+    //Serial.println(time_stamp);
   }
 }
 
@@ -131,10 +142,15 @@ void setup_rtc(){
 }
 
 
-void determineMessageType() {
-  unsigned long current_time = micros();
-  
-  digitalWrite(LED_BUILTIN, HIGH);
-  delay(500);
-  digitalWrite(LED_BUILTIN, LOW);
+void determineMessageType(char indicator) {
+  if (indicator == '1') {
+    // the gateway has just turned on, do nothing
+    //Serial.println("This is a test");
+  }
+  else if (indicator == '2') {
+    synchronise = true;     //gateway has started the synchronisation procedure
+  }
+  else if (indicator == '3') {
+    synchronise = false;    //the timings have synchronised
+  }
 }
