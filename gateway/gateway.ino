@@ -8,10 +8,10 @@
 
 /*************** Include Libraries *******************/
 #include <SPI.h>
-#include <stdio.h>
+//#include <stdio.h>
 #include <RH_RF95.h>
-#include <MCP7940.h>
-#include <SD.h>
+//#include <MCP7940.h>
+//#include <SD.h>
 
 /*************** Defining Constants ******************/
 #define RFM95_CS 10       //chip select for SPI line on radio
@@ -20,6 +20,7 @@
 #define RF95_FREQ 915.0   // Radio Frequency, match to Rx
 #define SYNCH_BUTTON 3   // Buton to start Synchronisation
 #define SDCARD_CS 4       // chip select for SPI line on SDCARD
+#define INPUT_CAPTURE 8          // Port B, pin 0, input interrupt pin 
 
 /************ Function definitions *******************/
 void button_pressed();
@@ -29,65 +30,125 @@ void setup_sdcard();
 
 //Instantiate classes
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
-MCP7940_Class MCP7940;
-File myFile;
+//MCP7940_Class MCP7940;
+//File myFile;
 
 /*************** Global Variables *******************/
-unsigned long current_microseconds;
-unsigned long prev_microseconds;
-unsigned long max_microseconds;
+unsigned long cycles = 0;
 unsigned long last_interruptTime = 0;
 unsigned long time_stamp;
+uint8_t data[RH_RF95_MAX_MESSAGE_LEN];
+uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
+String message;
 int debounce_delay = 500;
 int LED_state = 0;
 bool synchronising;
+
 
 /**************** First Start up *********************/
 void setup() {  //set up code, runs once
   //setting up inputs and outputs
   pinMode(SYNCH_BUTTON, INPUT);
   pinMode(LED_BUILTIN, OUTPUT);
-
+  pinMode(INPUT_CAPTURE, OUTPUT);
+  
   Serial.begin(9600);
-  //while(!Serial) {
-   // delay(1);
- // }
+  noInterrupts();
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1 = 0;
+  //OCR1A = 50000;
+  TCCR1B |= (1 << ICNC1);       //enable noise cancelling
+  TCCR1B |= (1 << ICES1);       //interrupt occurs on rising edge
+  TCCR1B |= (1 << CS10);        //no prescaler
+  //TCCR1B |= (1 << WGM12);
+
+  TIMSK1 |= (1 << ICIE1);       //enable input capure interrupt 
+  TIMSK1 |= (1 << TOIE1);       // enable overflow interrupt
+  //TIMSK1 |= (1 << OCIE1A);
+
+  interrupts();
+  
   Serial.println(F("Cattle Tracker - This is the Gateway, Welcome"));
 
   // Setting up the modules
   setup_radio();
-  setup_rtc();
-  setup_sdcard();
-
+  //setup_rtc();
+  //setup_sdcard();
+  
   Serial.println(F("First start: Sending beacon to Nodes"));
-  uint8_t beacon[] = "1";
+  uint8_t beacon[] = "1"; 
   rf95.send(beacon,sizeof(beacon));
   rf95.waitPacketSent();
-  
+   /*
+  delay(1000);
+  //Setting up the timers and interrupts
+  //noInterrupts();   //disable interrupts so nothing happens while writing to registers 
+  //cli();
+  //reset everything to zero to start fresh
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCNT1 = 0;
+
+  TCCR1B |= (1 << ICNC1);
+  TCCR1B |= (1 << ICES1);       //interrupt occurs on rising edge
+  TCCR1B |= (1 << CS10);        //no prescaler
+
+
+  TIMSK1 |= (1 << ICIE1);       //enable input capure interrupt 
+  TIMSK1 |= (1 << TOIE1);       // enable overflow interrupt
+  //interrupts();
+  //sei();
+
+  */
   //attaching interrupts
   attachInterrupt(digitalPinToInterrupt(SYNCH_BUTTON), button_pressed, RISING);
 
-  prev_microseconds = micros();
-
 }
 
-/**************** Main Code **********************/
-void loop() {
-  current_microseconds = micros();
-  time_stamp = current_microseconds - prev_microseconds;
-  if (time_stamp > 1E6) prev_microseconds = current_microseconds;
-  uint8_t data[RH_RF95_MAX_MESSAGE_LEN];
+/********************** Interrupt Service Routines ***************************/
+ISR(TIMER1_OVF_vect) {        //timer one overflow interrupt service routine
+  //Serial.println("Overflow Detected");
+  cycles++;                   //increments the number of cycles done
+  //Serial.print("Cycles:   ");
+  //Serial.println(cycles);
+}
 
+ISR(TIMER1_CAPT_vect) {
+  //perform the distance calculation maybe ?
+  //write to sd card
+  time_stamp = ICR1 + cycles;   //probs wrong uno
+  //message = (char*)buf;
+  Serial.println("Input Capture Triggered");
+  Serial.println(ICR1);
+  Serial.println(cycles);
+  PORTB = 0;
+}
+
+
+/****************************** Main Code ************************************/
+void loop() {
+  
   if (synchronising) {    //gonna have to do synchronizing things here.
-    uint8_t temp_data[250];
+    uint8_t message_cycles[100];
+    uint8_t message_time[50];
+    unsigned long transmit_time = TCNT1;
     strcpy(data,"2"); 
-    sprintf(temp_data,"%lu",time_stamp);
+    sprintf(message_cycles, "%lu", cycles);
+    sprintf(message_time,"%lu",transmit_time);
     
-    strncat(data, temp_data,sizeof(temp_data));
+    strncat(data, message_cycles,sizeof(message_cycles));
     rf95.send(data,sizeof(data));
     rf95.waitPacketSent();
 
     synchronising = false;
+  } 
+  else if(rf95.available()) {
+    uint8_t len = sizeof(buf);
+    if(rf95.recv(buf, &len)) {
+      PORTB |= (1 << PB0);
+      
+    }
   }
 
 }
@@ -99,7 +160,8 @@ void button_pressed(){
    //write interrupt logic here
    //plan is to start the synchronisation content
    Serial.print(F("Button Pressed at:   "));
-   Serial.println(current_microseconds);
+   Serial.println(TCNT1);
+   //PORTB |= (1 << PB0);
    synchronising = true;
   }
   last_interruptTime = interruptTime;
@@ -131,7 +193,7 @@ void setup_radio(){
 
   rf95.setTxPower(23, false);
 }
-
+/*
 void setup_rtc() {
   while (!MCP7940.begin()) {
     Serial.println(F("Unable to find MCP7940M."));
@@ -150,9 +212,9 @@ void setup_rtc() {
 }
 
 
-void setup_sdcard() {
+/*void setup_sdcard() {
   if (!SD.begin(SDCARD_CS)) {
     Serial.println(F("SD Card Initialization failed!"));
      while (1);
   }  
-}
+} */
