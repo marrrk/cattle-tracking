@@ -14,13 +14,13 @@
 //#include <SD.h>
 
 /*************** Defining Constants ******************/
-#define RFM95_CS 10       //chip select for SPI line on radio
-#define RFM95_RST 9
-#define RFM95_INT 2
+#define RFM95_CS 8       //chip select for SPI line on radio
+#define RFM95_RST 4
+#define RFM95_INT 7
 #define RF95_FREQ 915.0   // Radio Frequency, match to Rx
 #define SYNCH_BUTTON 3   // Buton to start Synchronisation
-#define SDCARD_CS 4       // chip select for SPI line on SDCARD
-#define INPUT_CAPTURE 8          // Port B, pin 0, input interrupt pin 
+//#define SDCARD_CS 4       // chip select for SPI line on SDCARD
+#define INPUT_CAPTURE 13          // Port B, pin 0, input interrupt pin 
 
 /************ Function definitions *******************/
 void button_pressed();
@@ -37,12 +37,12 @@ RH_RF95 rf95(RFM95_CS, RFM95_INT);
 unsigned long cycles = 0;
 unsigned long last_interruptTime = 0;
 unsigned long time_stamp;
-uint8_t data[RH_RF95_MAX_MESSAGE_LEN];
+
+
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
-String message;
 int debounce_delay = 500;
 int LED_state = 0;
-bool synchronising;
+bool synchronising = true;
 
 
 /**************** First Start up *********************/
@@ -54,17 +54,18 @@ void setup() {  //set up code, runs once
   
   Serial.begin(9600);
   noInterrupts();
-  TCCR1A = 0;
-  TCCR1B = 0;
-  TCNT1 = 0;
+  TCCR3A = 0;
+  TCCR3B = 0;
+  TCCR3C = 0;
+  TCNT3 = 0;
   //OCR1A = 50000;
-  TCCR1B |= (1 << ICNC1);       //enable noise cancelling
-  TCCR1B |= (1 << ICES1);       //interrupt occurs on rising edge
-  TCCR1B |= (1 << CS10);        //no prescaler
+  TCCR3B |= (1 << ICNC3);       //enable noise cancelling
+  TCCR1B |= (1 << ICES3);       //interrupt occurs on rising edge
+  TCCR1B |= (1 << CS30);        //no prescaler
   //TCCR1B |= (1 << WGM12);
 
-  TIMSK1 |= (1 << ICIE1);       //enable input capure interrupt 
-  TIMSK1 |= (1 << TOIE1);       // enable overflow interrupt
+  TIMSK1 |= (1 << ICIE3);       //enable input capure interrupt 
+  TIMSK1 |= (1 << TOIE3);       // enable overflow interrupt
   //TIMSK1 |= (1 << OCIE1A);
 
   interrupts();
@@ -80,64 +81,59 @@ void setup() {  //set up code, runs once
   uint8_t beacon[] = "1"; 
   rf95.send(beacon,sizeof(beacon));
   rf95.waitPacketSent();
-   /*
-  delay(1000);
-  //Setting up the timers and interrupts
-  //noInterrupts();   //disable interrupts so nothing happens while writing to registers 
-  //cli();
-  //reset everything to zero to start fresh
-  TCCR1A = 0;
-  TCCR1B = 0;
-  TCNT1 = 0;
-
-  TCCR1B |= (1 << ICNC1);
-  TCCR1B |= (1 << ICES1);       //interrupt occurs on rising edge
-  TCCR1B |= (1 << CS10);        //no prescaler
-
-
-  TIMSK1 |= (1 << ICIE1);       //enable input capure interrupt 
-  TIMSK1 |= (1 << TOIE1);       // enable overflow interrupt
-  //interrupts();
-  //sei();
-
-  */
+  
   //attaching interrupts
   attachInterrupt(digitalPinToInterrupt(SYNCH_BUTTON), button_pressed, RISING);
 
 }
 
 /********************** Interrupt Service Routines ***************************/
-ISR(TIMER1_OVF_vect) {        //timer one overflow interrupt service routine
-  //Serial.println("Overflow Detected");
+ISR(TIMER3_OVF_vect) {        //timer one overflow interrupt service routine
   cycles++;                   //increments the number of cycles done
-  //Serial.print("Cycles:   ");
-  //Serial.println(cycles);
 }
 
-ISR(TIMER1_CAPT_vect) {
+ISR(TIMER3_CAPT_vect) {
   //perform the distance calculation maybe ?
-  //write to sd card
-  time_stamp = ICR1 + cycles;   //probs wrong uno
-  //message = (char*)buf;
-  Serial.println("Input Capture Triggered");
-  Serial.println(ICR1);
-  Serial.println(cycles);
-  PORTB = 0;
+  unsigned long receive_time = (ICR3 + (cycles * 0xFFFF));   //probs wrong uno
+  char *eptr;
+  if (((char*)buf)[0] == '2') { //received a synch type message
+     //based on synch technique: store drift amount/store synch time.
+     
+  }
+  else if (((char*)buf)[0] == '4') {//received a time_stamp
+    //calculate distance, and display distance 
+    unsigned long message_time = strtoul((char*)buf+1, &eptr, 10);
+    Serial.print("Time stamp received:   ");
+    Serial.println(message_time);
+    Serial.print("Time of arrival:    ");
+    Serial.println(receive_time);
+    long difference = receive_time - message_time;
+    
+    double distance = (difference * 125E-9) * 2.9925E8;
+    Serial.print("Message Received. Distance calculated is: ");
+    Serial.println(distance);
+  }
+  PORTC = 0;
 }
 
 
 /****************************** Main Code ************************************/
 void loop() {
+  char data[RH_RF95_MAX_MESSAGE_LEN];       //change to uint8_t when removing print statements
+  char *eptr;
   
-  if (synchronising) {    //gonna have to do synchronizing things here.
-    uint8_t message_cycles[100];
-    uint8_t message_time[50];
-    unsigned long transmit_time = TCNT1;
+  
+  if (synchronising) {    //gonna have to do synchronizing things here
+    char time_to_send[100];
+    cycles = 0;
+    unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3);
+   
     strcpy(data,"2"); 
-    sprintf(message_cycles, "%lu", cycles);
-    sprintf(message_time,"%lu",transmit_time);
+    sprintf(time_to_send, "%lu", transmit_time);
+    strncat(data, time_to_send,sizeof(time_to_send));
+  
+    //Serial.println(data);
     
-    strncat(data, message_cycles,sizeof(message_cycles));
     rf95.send(data,sizeof(data));
     rf95.waitPacketSent();
 
@@ -146,22 +142,19 @@ void loop() {
   else if(rf95.available()) {
     uint8_t len = sizeof(buf);
     if(rf95.recv(buf, &len)) {
-      PORTB |= (1 << PB0);
-      
+      //PORTB |= (1 << PB0);
+      PORTC |= (1 << PC7);
     }
   }
 
 }
 /********************* Function *********************/
 void button_pressed(){
-  long interruptTime = millis(); //this doesnt work, need a new way to debounce
-
-  if ((last_interruptTime - interruptTime) > debounce_delay) {
+  long interruptTime = TCNT3; //debouncing
+  
+  if ((last_interruptTime - interruptTime) > 0xFFFF) {
+   Serial.println("Button Pressed");
    //write interrupt logic here
-   //plan is to start the synchronisation content
-   Serial.print(F("Button Pressed at:   "));
-   Serial.println(TCNT1);
-   //PORTB |= (1 << PB0);
    synchronising = true;
   }
   last_interruptTime = interruptTime;
