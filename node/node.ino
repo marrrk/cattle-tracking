@@ -17,13 +17,13 @@
 #define RFM95_INT 7
 #define RF95_FREQ 915.0    // Radio Frequency, match to Tx
 #define INPUT_CAPTURE 13 // ICP3 = PC7
+#define SYNCH_BUTTON 2
 
 
 /***************** Function Definitions **************************/
 void setup_radio();
 void setup_rtc();
-void determineMessageType(char indicator);
-bool synchronized();
+void button_pressed();
 
 
 
@@ -34,12 +34,15 @@ MCP7940_Class MCP7940;
 
 /******************** Global Variables ******************************/
 unsigned long time_stamp;
+unsigned long receive_time;
+unsigned long last_interruptTime;
 uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 uint8_t count = 0;
-bool synchronise;
+bool synchronise = false;
 bool send_timestamp;
-unsigned long cycles;
-
+unsigned long cycles = 0;
+long delta;
+long propagation_delay;
 
 /****************** SETTING UP ***************************/
 
@@ -49,6 +52,7 @@ void setup() {
     //delay(1);
   //}
   pinMode(INPUT_CAPTURE, OUTPUT); //set ICP3 pin as an output to allow writing to the port
+  pinMode(SYNCH_BUTTON, OUTPUT);
   setup_radio();
   //setup_rtc();
   
@@ -81,24 +85,65 @@ void setup() {
   TCCR1B |= (1 << CS12) | (1 << CS10);   // sets up Prescaler to 1024. 
 
   TIMSK1 |= (1 << OCIE1A);    //enable output compare interrupt A
-  
 
+  //attaching interrupt to button
+  attachInterrupt(digitalPinToInterrupt(SYNCH_BUTTON), button_pressed, RISING);
 }
 
 ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
   char *eptr;
-  //will synchronise times ?
+  receive_time = (cycles * 0xFFFF) + ICR3;
+  
    if (((char*)buf)[0] == '1') {
-    // the gateway has just turned on, do nothing
-    //Serial.println("This is a test");
+    // the gateway has just turned on, beacon message - reset timers.
+    Serial.println("Gateway has come online");
+    cycles = 0;
+    TCNT3 = 0;
   }
   else if (((char*)buf)[0] == '2') {
-    TCNT1 = strtoul((char*)buf+1, &eptr, 10);
-    cycles = 0;
-    synchronise = true;     //gateway has started the synchronisation procedure
-  }
-  else if (((char*)buf)[0] == '3') {
-    synchronise = false;    //the timings have synchronised
+    //going to use strtok to separate the times received 
+    Serial.print("Received message:   ");
+    Serial.println((char*)buf);
+    char *times[5];
+    char *ptr = NULL;
+    byte index = 0;
+
+    ptr = strtok((char*)buf, "-"); //get the first piece of data
+
+    while(ptr != NULL) { //loop to get the rest of the data
+      times[index] = ptr;
+      index++;
+      ptr = strtok(NULL, "-");
+    }
+
+    /*for (int n = 0; n< index; n++) {    //printing data just to make sure
+      Serial.println(times[n]);
+    } */
+     //take in T1
+     long T1 = strtoul(times[1], &eptr, 10);
+     Serial.println(T1);
+     
+     //take in T2
+     long T2 = strtoul(times[2], &eptr, 10);
+     Serial.println(T2);
+
+     //take in T3
+     long T3 = strtoul(times[3], &eptr, 10);
+     Serial.println(T3);
+
+     Serial.println(receive_time);
+
+     //calculate delta
+     delta = ((T2 - T1) - (receive_time - T3))/2;
+     Serial.print("Clock drift:   ");
+     Serial.println(delta);
+      
+     //calculate d, do we need it?
+     propagation_delay = ((T2 - T1) + (receive_time - T3))/2;
+     Serial.print("Propagation delay:   ");
+     Serial.println(propagation_delay);
+
+     //adjust clock or can do it at every clock read ?
   }
   
   PORTC = 0;
@@ -117,7 +162,7 @@ ISR(TIMER1_COMPA_vect) {      //TIMER1 output compare ISR
 
 void loop() {
   //sleep for a while, ideally
-  char *e;
+  char *eptr;
   char data[RH_RF95_MAX_MESSAGE_LEN];
   
   if (rf95.available()) {   //message available OR synchronizing
@@ -128,27 +173,42 @@ void loop() {
       //flag ISR
       PORTC |= (1 << PC7);
       //RH_RF95::printBuffer("Received: ", buf, len);
-      
+      /*
       Serial.print(F("Got in string: "));
       Serial.println((char*)buf);
       
       Serial.println(((char*)buf)[0]);
       Serial.print("Got in long:   ");
-      unsigned long x = strtoul((char*)buf, &e, 10);
+      unsigned long x = strtoul((char*)buf, &eptr, 10);
       Serial.println(x);
 
       //received message, now reply accordingly. if synchronizing or not 
-      if (synchronise) {
+     /* if (synchronise) {
         //synchronizing logic, send the time back and wait
         Serial.println(F("Syncrhonizing"));
       }
-      else { Serial.println(F("Synchronizing complete")); }
+      else { Serial.println(F("Synchronizing complete")); } */
       
       rf95.sleep();
     } 
     else { 
         Serial.println(F("Receive Failed"));  
       }
+  }
+  else if (synchronise) {
+    char time_to_send[100];
+    unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3);        //T1
+   
+    strcpy(data,"2"); //set type of message
+    sprintf(time_to_send, "%lu", transmit_time);      //convert transmit time to string
+    strncat(data, time_to_send,sizeof(time_to_send)); //include transmit time to message
+  
+    //Serial.println(data);
+    
+    rf95.send(data,sizeof(data));         //sending data
+    rf95.waitPacketSent();
+
+    synchronise = false;
   }
   else if (send_timestamp) {              //no message received, send the signal containing information from node
       char message_time[100];
@@ -169,6 +229,17 @@ void loop() {
   } 
 }
 
+
+void button_pressed(){
+  long interruptTime = TCNT3; //debouncing
+  
+  if ((last_interruptTime - interruptTime) > 0xFFFF) {
+   Serial.println("Button Pressed");
+   //write interrupt logic here
+   synchronise = true;
+  }
+  last_interruptTime = interruptTime;
+}
 
 void setup_radio(){
   pinMode(RFM95_RST, OUTPUT);
@@ -215,17 +286,3 @@ void setup_rtc(){
   Serial.println(F("RTC Setup OK!"));
 }
 */
-
-void determineMessageType(char indicator) {
-  if (indicator == '1') {
-    // the gateway has just turned on, do nothing
-    //Serial.println("This is a test");
-  }
-  else if (indicator == '2') {
-    cycles = 0;
-    synchronise = true;     //gateway has started the synchronisation procedure
-  }
-  else if (indicator == '3') {
-    synchronise = false;    //the timings have synchronised
-  }
-}
