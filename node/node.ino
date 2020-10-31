@@ -72,7 +72,7 @@ void setup() {
   TIMSK3 |= (1 << ICIE3);      //enable input interrupt
   TIMSK3 |= (1 << TOIE3);      //enable overflow interrupt
   
-  //Next, setting up timer 1 for OCR. Interrupt to occur at 2Hz, will allow for sending timestamp
+  //Next, setting up timer 1 for OCR. Interrupt to occur at 0.2Hz, will allow for sending timestamp
   //reset everything to zero
   TCCR1A = 0;
   TCCR1B = 0;
@@ -120,15 +120,15 @@ ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
       Serial.println(times[n]);
     } */
      //take in T1
-     long T1 = strtoul(times[1], &eptr, 10);
+     unsigned long T1 = strtoul(times[1], &eptr, 10);
      Serial.println(T1);
      
      //take in T2
-     long T2 = strtoul(times[2], &eptr, 10);
+     unsigned long T2 = strtoul(times[2], &eptr, 10);
      Serial.println(T2);
 
      //take in T3
-     long T3 = strtoul(times[3], &eptr, 10);
+     unsigned long T3 = strtoul(times[3], &eptr, 10);
      Serial.println(T3);
 
      Serial.println(receive_time);
@@ -144,6 +144,11 @@ ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
      Serial.println(propagation_delay);
 
      //adjust clock or can do it at every clock read ?
+     //cycles = cycles - ((delta)/0xFFFF);
+  }
+  else if ((char*)buf[0] == '3') {
+    //received a message to start the synchronization process
+    synchronise = true;
   }
   
   PORTC = 0;
@@ -212,7 +217,7 @@ void loop() {
   }
   else if (send_timestamp) {              //no message received, send the signal containing information from node
       char message_time[100];
-      unsigned long transmit_time = (cycles * 0xFFFF) + TCNT3;
+      unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3) + delta + propagation_delay;
       //Serial.print("transmit time as long:   ");
       //Serial.println(transmit_time);
       strcpy(data,"4");

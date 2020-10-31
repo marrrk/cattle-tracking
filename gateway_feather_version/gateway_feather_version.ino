@@ -37,6 +37,7 @@ RH_RF95 rf95(RFM95_CS, RFM95_INT);
 unsigned long cycles = 0;
 unsigned long last_interruptTime = 0;
 unsigned long time_stamp;
+int count = 0;
 long delta;
 long propagation_delay;
 unsigned long receive_time;
@@ -44,7 +45,7 @@ uint8_t buf[RH_RF95_MAX_MESSAGE_LEN];
 int debounce_delay = 500;
 int LED_state = 0;
 bool synchronising = false;
-
+bool start_synch = false;
 
 /**************** First Start up *********************/
 void setup() {  //set up code, runs once
@@ -58,6 +59,7 @@ void setup() {  //set up code, runs once
   
   
   noInterrupts();
+  //Timer/counter for tracking
   TCCR3A = 0;
   TCCR3B = 0;
   TCCR3C = 0;
@@ -71,6 +73,18 @@ void setup() {  //set up code, runs once
   TIMSK3 |= (1 << ICIE3);       //enable input capure interrupt 
   TIMSK3 |= (1 << TOIE3);       // enable overflow interrupt
   //TIMSK1 |= (1 << OCIE1A);
+
+  //Timer to trigger every 8 seconds. To trigger synchronization procedure
+  TCCR1A = 0;
+  TCCR1B = 0;
+  TCCR1C = 0;
+
+  OCR1A = 62500;      //OCR Value, makes a frequency of 0.125Hz. Value = 8MHZ/1024/0.125
+
+  TCCR1B |= (1 << WGM12);     //CTC Mode, MAX = OCR
+  TCCR1B |= (1 << CS12) | (1 << CS10);    //Prescaler = 1024
+
+  TIMSK1 |= (1 << OCIE1A);     //Enables Output Compare Interrupt A
 
   interrupts();
   
@@ -100,7 +114,7 @@ ISR(TIMER3_OVF_vect) {        //timer one overflow interrupt service routine
 
 ISR(TIMER3_CAPT_vect) {
   //perform the distance calculation maybe ?
-  receive_time = ((ICR3 + (cycles * 0xFFFF)) * 1.003340883746);   //probs wrong uno
+  receive_time = ((ICR3 + (cycles * 0xFFFF)) * 1.003340883746);   // time of received message, accounting for clock drift
   char *eptr;
   if (((char*)buf)[0] == '2') { //received a synch type message
     //TCNT3 = strtoul((char*)buf+1, &eptr, 10);
@@ -125,14 +139,33 @@ ISR(TIMER3_CAPT_vect) {
   PORTC = 0;
 }
 
+ISR(TIMER1_COMPA_vect) {
+  count++;
+
+  if (count == 3) {
+    start_synch = true;
+    count = 0;
+  }
+}
+
+//want it to send a message to tell the node to start synchronizing
 
 /****************************** Main Code ************************************/
 void loop() {
   char data[RH_RF95_MAX_MESSAGE_LEN];       //change to uint8_t when removing print statements
   char *eptr;
-  
-  
-  if (synchronising) {    //gonna have to do synchronizing things here
+
+  if (start_synch) {
+    strcpy(data,"3");
+    Serial.println(F("Initialising Syncrhonization Protocol"));
+
+    //Send the Synch Beacon
+    rf95.send(data,sizeof(data));
+    rf95.waitPacketSent();
+
+    start_synch = false;
+  }
+  else if (synchronising) {    //gonna have to do synchronizing things here
     char ack_message_time[20];
     char pulse_receive_time[20];
     String pulse_message_time;
@@ -175,7 +208,7 @@ void loop() {
     //Serial.println(data);
     
     /******* finally add in T3 **********/
-    unsigned long ack_time = (cycles * 0xFFFF) + TCNT3;
+    unsigned long ack_time = ((cycles * 0xFFFF) + TCNT3) * 1.003340883746;
     sprintf(ack_message_time, "%lu", ack_time);
     strncat(data, ack_message_time, sizeof(ack_message_time));
     //strncat(data, "-", 1);
