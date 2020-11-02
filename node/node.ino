@@ -9,7 +9,6 @@
 /****************** Include Libraries ***********************/
 #include <SPI.h>
 #include <RH_RF95.h>
-#include <MCP7940.h>
 
 /***************** Defining Constants **********************/
 #define RFM95_CS 8
@@ -18,6 +17,7 @@
 #define RF95_FREQ 915.0    // Radio Frequency, match to Tx
 #define INPUT_CAPTURE 13 // ICP3 = PC7
 #define SYNCH_BUTTON 2
+#define VBATPIN A9
 
 
 /***************** Function Definitions **************************/
@@ -29,7 +29,7 @@ void button_pressed();
 
 /******************* Instantiate classes **************************/
 RH_RF95 rf95(RFM95_CS, RFM95_INT);
-MCP7940_Class MCP7940;
+//MCP7940_Class MCP7940;
 
 
 /******************** Global Variables ******************************/
@@ -43,6 +43,8 @@ bool send_timestamp;
 unsigned long cycles = 0;
 long delta;
 long propagation_delay;
+
+const char ID[3] = "N00";
 
 /****************** SETTING UP ***************************/
 
@@ -94,13 +96,13 @@ ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
   char *eptr;
   receive_time = (cycles * 0xFFFF) + ICR3;
   
-   if (((char*)buf)[0] == '1') {
+   if (((char*)buf)[3] == '1') {
     // the gateway has just turned on, beacon message - reset timers.
     Serial.println("Gateway has come online");
     cycles = 0;
     TCNT3 = 0;
   }
-  else if (((char*)buf)[0] == '2') {
+  else if (((char*)buf)[3] == '3') {
     //going to use strtok to separate the times received 
     Serial.print("Received message:   ");
     Serial.println((char*)buf);
@@ -146,7 +148,7 @@ ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
      //adjust clock or can do it at every clock read ?
      //cycles = cycles - ((delta)/0xFFFF);
   }
-  else if ((char*)buf[0] == '3') {
+  else if ((char*)buf[3] == '2') {
     //received a message to start the synchronization process
     synchronise = true;
   }
@@ -203,8 +205,9 @@ void loop() {
   else if (synchronise) {
     char time_to_send[100];
     unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3);        //T1
-   
-    strcpy(data,"2"); //set type of message
+
+    strcpy(data,ID); //set Node ID
+    strncat(data,"3",sizeof("3")); //set type of message
     sprintf(time_to_send, "%lu", transmit_time);      //convert transmit time to string
     strncat(data, time_to_send,sizeof(time_to_send)); //include transmit time to message
   
@@ -217,14 +220,31 @@ void loop() {
   }
   else if (send_timestamp) {              //no message received, send the signal containing information from node
       char message_time[100];
+      char battery[100];
+      
+      double measured_bat = analogRead(VBATPIN);
+      measured_bat *= 2;
+      measured_bat *= 3.3;
+      measured_bat /=1024;
+
+      //sprintf(battery,"%f",measured_bat);
+      dtostrf(measured_bat,3,3,battery);
+
+      Serial.print("Battery in float: "); Serial.println(measured_bat);
+      Serial.print("Battery in strin: "); Serial.println(battery);
+      
       unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3) + delta + propagation_delay;
       //Serial.print("transmit time as long:   ");
       //Serial.println(transmit_time);
-      strcpy(data,"4");
+      strcpy(data,ID);
+      strncat(data,"4",sizeof("4"));
       sprintf(message_time,"%lu", transmit_time);
       //Serial.print("transmit time as string: ");
       //Serial.println(message_time);
       strncat(data,message_time, sizeof(message_time));
+      strncat(data,"-",1);
+      strncat(data,battery,sizeof(battery));
+      
       //Serial.print("Sending time_stamp:   ");
       //Serial.println(data);
       rf95.send(data,sizeof(data));

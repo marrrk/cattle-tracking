@@ -47,6 +47,8 @@ int LED_state = 0;
 bool synchronising = false;
 bool start_synch = false;
 
+const char ID[3] = "G00";
+
 /**************** First Start up *********************/
 void setup() {  //set up code, runs once
   Serial.begin(9600);
@@ -98,7 +100,8 @@ void setup() {  //set up code, runs once
   Serial.println(F("First start: Sending beacon to Nodes"));
   TCNT3 = 0;
   cycles = 0;
-  uint8_t beacon[] = "1"; 
+  uint8_t beacon[4] = "G00";
+  strncat(beacon,"1",sizeof("1")); 
   rf95.send(beacon,sizeof(beacon));
   rf95.waitPacketSent();
   
@@ -114,27 +117,41 @@ ISR(TIMER3_OVF_vect) {        //timer one overflow interrupt service routine
 
 ISR(TIMER3_CAPT_vect) {
   //perform the distance calculation maybe ?
-  receive_time = ((ICR3 + (cycles * 0xFFFF)) * 1.003340883746);   // time of received message, accounting for clock drift
+  receive_time = ((ICR3 + (cycles * 0xFFFF)) * 1.003353); //0883746);   // time of received message, accounting for clock drift
   char *eptr;
-  if (((char*)buf)[0] == '2') { //received a synch type message
+  if (((char*)buf)[3] == '3') { //received a synch type message
     //TCNT3 = strtoul((char*)buf+1, &eptr, 10);
     //cycles = 0;
     Serial.println("Synchronising");
     synchronising = true;     //node has started the synchronisation procedure     
      
   }
-  else if (((char*)buf)[0] == '4') {//received a time_stamp
-   ///calculate distance, and display distance 
-    unsigned long message_time = strtoul((char*)buf+1, &eptr, 10);      //reading in the time_stamp received
+  else if (((char*)buf)[3] == '4') {//received a time_stamp
+    //calculate distance, and display distance
+    char *received[2];
+    char *ptr = NULL;
+    byte index = 0;
+
+    ptr = strtok((char*)buf, "-");
+
+    while(ptr != NULL) { //loop to get the rest of the data
+      received[index] = ptr;
+      index++;
+      ptr = strtok(NULL, "-");
+    }
+    
+    unsigned long message_time = strtoul(received[0]+4, &eptr, 10);      //reading in the time_stamp received
+    Serial.print("Message Received:   "); Serial.println((char*)buf);
     Serial.print("Time stamp received:   ");
     Serial.println(message_time);
     Serial.print("Time of arrival:    ");
     Serial.println(receive_time);
-    long difference = receive_time - message_time - propagation_delay - delta;          //calculating time difference
-    
-    double distance = (difference * 125E-9) * 2.9925E2;     //calculating distance
-    Serial.print("Message Received. Distance calculated is: ");
-    Serial.println(distance);
+    Serial.print("Battery Received:   "); Serial.println(received[1]);
+    long difference = receive_time - message_time; // - propagation_delay - delta;          //calculating time difference
+    Serial.print("Difference clock times:  "); Serial.println(difference);
+    //double distance = (difference * 125E-9) * 2.9925E8;     //calculating distance
+    //Serial.print("Message Received. Distance calculated is: ");
+    //Serial.println(distance);
   }
   PORTC = 0;
 }
@@ -156,9 +173,10 @@ void loop() {
   char *eptr;
 
   if (start_synch) {
-    strcpy(data,"3");
+    strcpy(data,ID);
+    strncat(data,"2",sizeof("2"));
     Serial.println(F("Initialising Syncrhonization Protocol"));
-
+    //Serial.println(data);
     //Send the Synch Beacon
     rf95.send(data,sizeof(data));
     rf95.waitPacketSent();
@@ -170,16 +188,19 @@ void loop() {
     char pulse_receive_time[20];
     String pulse_message_time;
    
+
+    /********** Include ID ***********/
+    strcpy(data,ID);
     
     /******* Set type of message *********/
-    strcpy(data,"2");
+    strncat(data,"3",sizeof("3"));
     //Serial.print("message identifier:  ");
     //Serial.println(data);
     strncat(data,"-",1); 
     
     /*** add in the received time_stamp from gateway to the message, T1  ***/
     //pulse_message_time = (char*)buf;
-    strncat(data, (char*)buf+1, sizeof(buf));
+    strncat(data, (char*)buf+4, sizeof(buf));
     strncat(data,"-",1);
     //strncat(data, "00000000000000000000", (21-strlen(buf)));
     //test to see what the story says
@@ -208,11 +229,11 @@ void loop() {
     //Serial.println(data);
     
     /******* finally add in T3 **********/
-    unsigned long ack_time = ((cycles * 0xFFFF) + TCNT3) * 1.003340883746;
+    unsigned long ack_time = ((cycles * 0xFFFF) + TCNT3) * 1.003353; // 1.003340883746;
     sprintf(ack_message_time, "%lu", ack_time);
     strncat(data, ack_message_time, sizeof(ack_message_time));
     //strncat(data, "-", 1);
-    //Serial.println(data);
+    Serial.println(data);
 
     //transmit data
     rf95.send(data,sizeof(data));
