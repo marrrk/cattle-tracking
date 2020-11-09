@@ -47,6 +47,9 @@ int LED_state = 0;
 bool synchronising = false;
 bool start_synch = false;
 
+//ModemConfigChoice configuration;
+const int MEAN = 12553;
+const int STD = 310;
 const char ID[3] = "G00";
 
 /**************** First Start up *********************/
@@ -104,7 +107,8 @@ void setup() {  //set up code, runs once
   strncat(beacon,"1",sizeof("1")); 
   rf95.send(beacon,sizeof(beacon));
   rf95.waitPacketSent();
-  
+
+  start_synch=true;
   //attaching interrupts
   //attachInterrupt(digitalPinToInterrupt(SYNCH_BUTTON), button_pressed, RISING);
 
@@ -112,12 +116,13 @@ void setup() {  //set up code, runs once
 
 /********************** Interrupt Service Routines ***************************/
 ISR(TIMER3_OVF_vect) {        //timer one overflow interrupt service routine
-  cycles++;                   //increments the number of cycles done
+    cycles++;                   //increments the number of cycles done
 }
 
 ISR(TIMER3_CAPT_vect) {
   //perform the distance calculation maybe ?
-  receive_time = ((ICR3 + (cycles * 0xFFFF)) * 1.003353); //0883746);   // time of received message, accounting for clock drift
+  receive_time = ((ICR3 + (cycles * 0xFFFF)));// * 1.00335); //0883746);   // time of received message, accounting for clock drift
+  //Serial.println((char*)buf);
   char *eptr;
   if (((char*)buf)[3] == '3') { //received a synch type message
     //TCNT3 = strtoul((char*)buf+1, &eptr, 10);
@@ -128,6 +133,7 @@ ISR(TIMER3_CAPT_vect) {
   }
   else if (((char*)buf)[3] == '4') {//received a time_stamp
     //calculate distance, and display distance
+    //Serial.print("Message Received:   "); Serial.println((char*)buf);
     char *received[2];
     char *ptr = NULL;
     byte index = 0;
@@ -141,17 +147,23 @@ ISR(TIMER3_CAPT_vect) {
     }
     
     unsigned long message_time = strtoul(received[0]+4, &eptr, 10);      //reading in the time_stamp received
-    Serial.print("Message Received:   "); Serial.println((char*)buf);
-    Serial.print("Time stamp received:   ");
-    Serial.println(message_time);
-    Serial.print("Time of arrival:    ");
-    Serial.println(receive_time);
+    //unsigned long message_time = strtoul((char*)buf+4, &eptr, 10);
+    Serial.print("Time stamp received:   "); Serial.println(message_time);
+    Serial.print("Time of arrival:    ");  Serial.println(receive_time);
     Serial.print("Battery Received:   "); Serial.println(received[1]);
     long difference = receive_time - message_time; // - propagation_delay - delta;          //calculating time difference
-    Serial.print("Difference clock times:  "); Serial.println(difference);
-    //double distance = (difference * 125E-9) * 2.9925E8;     //calculating distance
-    //Serial.print("Message Received. Distance calculated is: ");
-    //Serial.println(distance);
+    Serial.print("Difference clock times:  ");   Serial.println(difference);
+
+    difference = difference - MEAN;
+    Serial.print(F("Difference in clock times minus communication errors:   ")); Serial.println(difference);
+    
+    difference = abs(difference / STD);
+    Serial.print(F("Number of Standard Deviations within:  "));  Serial.println(difference);
+    
+    double distance = (difference * 125E-9) * 2.9925E8;     //calculating distance
+    Serial.print("Message Received. Distance calculated is: ");   Serial.println(distance);
+
+    Serial.print("RSSI: ");   Serial.println(rf95.lastRssi(), DEC);
   }
   PORTC = 0;
 }
@@ -229,7 +241,7 @@ void loop() {
     //Serial.println(data);
     
     /******* finally add in T3 **********/
-    unsigned long ack_time = ((cycles * 0xFFFF) + TCNT3) * 1.003353; // 1.003340883746;
+    unsigned long ack_time = ((cycles * 0xFFFF) + TCNT3);// * 1.00335; // 1.003340883746;
     sprintf(ack_message_time, "%lu", ack_time);
     strncat(data, ack_message_time, sizeof(ack_message_time));
     //strncat(data, "-", 1);
@@ -270,21 +282,14 @@ void loop() {
 }
 
 /********************* Function *********************/
-void button_pressed(){
-  long interruptTime = TCNT3; //debouncing
-  
-  if ((last_interruptTime - interruptTime) > 0xFFFF) {
-   Serial.println("Button Pressed");
-   //write interrupt logic here
-   synchronising = true;
-  }
-  last_interruptTime = interruptTime;
-}
-
 
 void setup_radio(){
   pinMode(RFM95_RST, OUTPUT);
   digitalWrite(RFM95_RST,HIGH);
+
+  while(!Serial) {
+    delay(1);
+  }
   
   // manual reset
   digitalWrite(RFM95_RST, LOW);
@@ -305,30 +310,12 @@ void setup_radio(){
     while (1);
   } 
 
-  rf95.setTxPower(23, false);
-}
-/*
-void setup_rtc() {
-  while (!MCP7940.begin()) {
-    Serial.println(F("Unable to find MCP7940M."));
+  rf95.setTxPower(1, false);
+ /* if (!rf95.setModemConfig(2)) {
+    Serial.println(F("Setting Configuration Failed"));
     while(1);
   }
-  while (!MCP7940.deviceStatus()) {// Turn oscillator on if necessary  //
-    Serial.println(F("Oscillator is off, turning it on."));
-    bool deviceStatus = MCP7940.deviceStart();  // Start oscillator and return state//
-    if (!deviceStatus) {
-      Serial.println(F("Oscillator did not start, trying again."));
-      delay(1000);
-    } // of if-then oscillator didn't start
-  } // of while the oscillator is off
-  MCP7940.adjust();                           
-  
+  else { Serial.println("Setting Configuration Success"); }
+  */
+
 }
-
-
-/*void setup_sdcard() {
-  if (!SD.begin(SDCARD_CS)) {
-    Serial.println(F("SD Card Initialization failed!"));
-     while (1);
-  }  
-} */

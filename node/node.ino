@@ -81,26 +81,26 @@ void setup() {
   TCCR1C = 0;
   TCNT1 = 0;
 
-  OCR1A = 39062;      //OCR value to count to. found by 8Mhz/1024(prescaler value)/0.2Hz
+  //OCR1A = 39062;      //OCR value to count to. found by 8Mhz/1024(prescaler value)/0.2Hz
+  OCR1A = 19531;
 
   TCCR1B |= (1 << WGM12);   //Choosing CTC Mode, where MAX value = OCR1A
   TCCR1B |= (1 << CS12) | (1 << CS10);   // sets up Prescaler to 1024. 
 
   TIMSK1 |= (1 << OCIE1A);    //enable output compare interrupt A
-
-  //attaching interrupt to button
-  attachInterrupt(digitalPinToInterrupt(SYNCH_BUTTON), button_pressed, RISING);
 }
 
 ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
   char *eptr;
-  receive_time = (cycles * 0xFFFF) + ICR3;
+  receive_time = ((cycles * 0xFFFF) + ICR3) * 0.996665;
   
    if (((char*)buf)[3] == '1') {
     // the gateway has just turned on, beacon message - reset timers.
     Serial.println("Gateway has come online");
     cycles = 0;
     TCNT3 = 0;
+    delta = 0;
+    propagation_delay = 0;
   }
   else if (((char*)buf)[3] == '3') {
     //going to use strtok to separate the times received 
@@ -141,7 +141,8 @@ ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
      Serial.println(delta);
       
      //calculate d, do we need it?
-     propagation_delay = ((T2 - T1) + (receive_time - T3))/2;
+     //propagation_delay = ((T2 - T1) + (receive_time - T3))/2;
+     propagation_delay = 3259783;
      Serial.print("Propagation delay:   ");
      Serial.println(propagation_delay);
 
@@ -157,7 +158,7 @@ ISR(TIMER3_CAPT_vect) {       //input interrupt ISR
 }
 
 ISR(TIMER3_OVF_vect) {        //TIMER3 overflow ISR
-  cycles++;
+    cycles++;                   //increments the number of cycles done
 }
 
 ISR(TIMER1_COMPA_vect) {      //TIMER1 output compare ISR 
@@ -204,7 +205,7 @@ void loop() {
   }
   else if (synchronise) {
     char time_to_send[100];
-    unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3);        //T1
+    unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3) * 0.996665;        //T1
 
     strcpy(data,ID); //set Node ID
     strncat(data,"3",sizeof("3")); //set type of message
@@ -220,24 +221,27 @@ void loop() {
   }
   else if (send_timestamp) {              //no message received, send the signal containing information from node
       char message_time[100];
+      
       char battery[100];
+
+      strcpy(data,ID);
+      strncat(data,"4",sizeof("4"));
       
       double measured_bat = analogRead(VBATPIN);
       measured_bat *= 2;
       measured_bat *= 3.3;
-      measured_bat /=1024;
+      measured_bat /=1024; 
 
       //sprintf(battery,"%f",measured_bat);
       dtostrf(measured_bat,3,3,battery);
 
       Serial.print("Battery in float: "); Serial.println(measured_bat);
       Serial.print("Battery in strin: "); Serial.println(battery);
-      
-      unsigned long transmit_time = ((cycles * 0xFFFF) + TCNT3) + delta + propagation_delay;
+     
+      unsigned long transmit_time = (((cycles * 0xFFFF) + TCNT3) + delta + propagation_delay) * 0.996665;
       //Serial.print("transmit time as long:   ");
       //Serial.println(transmit_time);
-      strcpy(data,ID);
-      strncat(data,"4",sizeof("4"));
+      
       sprintf(message_time,"%lu", transmit_time);
       //Serial.print("transmit time as string: ");
       //Serial.println(message_time);
@@ -246,7 +250,7 @@ void loop() {
       strncat(data,battery,sizeof(battery));
       
       //Serial.print("Sending time_stamp:   ");
-      //Serial.println(data);
+      Serial.println(data);
       rf95.send(data,sizeof(data));
       rf95.waitPacketSent();
       
@@ -289,25 +293,11 @@ void setup_radio(){
     while (1);
   } 
 
-  rf95.setTxPower(23, false);
-} 
+  rf95.setTxPower(1, false);
 
-/*;
-void setup_rtc(){
-  while (!MCP7940.begin()) {
-    Serial.println(F("Unable to find MCP7940M."));
+  /*if (!rf95.setModemConfig(2)) {
+    Serial.println(F("Setting Configuration Failed"));
     while(1);
   }
-  while (!MCP7940.deviceStatus()) {// Turn oscillator on if necessary  //
-    Serial.println(F("Oscillator is off, turning it on."));
-    bool deviceStatus = MCP7940.deviceStart();  // Start oscillator and return state//
-    if (!deviceStatus) {
-      Serial.println(F("Oscillator did not start, trying again."));
-      delay(1000);
-    } // of if-then oscillator didn't start
-  } // of while the oscillator is off
-  MCP7940.adjust();                           
-
-  Serial.println(F("RTC Setup OK!"));
-}
-*/
+  else { Serial.println("Setting Configuration Success"); } */
+} 
